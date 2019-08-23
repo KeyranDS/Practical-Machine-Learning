@@ -1,0 +1,79 @@
+---
+title: "Practical Machine Learning _ Prediction Assignment Writeup"
+output: html_document
+---
+
+Six participants were asked to do barbell lifts in five different ways, annotated through letters "A" to "E". Thanks to devices such as Jawbone Up, Nike FuelBand and Fitbit, it is now possible to gather informations of their movements. The goal of this project is to see if it is possible to deduct the way in wich the barbell lift was done only thanks to detected patterns in these informations. This could be used to guide sportsmen in the way they exercise, to maximize the effect and avoid injuries.
+
+## Preparing data
+```{r read dataset}
+library(caret)
+
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+test_data<-read.csv("pml-testing.csv")
+train_data<-read.csv("pml-training.csv", na.strings=c("NA",""))
+train_data <- train_data[sample(nrow(train_data)),-c(1,2)]
+
+comp_var_test<-names(which(sapply(test_data, anyNA)))
+comp_var_train<-names(which(sapply(train_data, anyNA)))
+complete_train <- train_data[,!(names(train_data) %in% comp_var_train)]
+testing<-test_data[,!(names(test_data) %in% comp_var_test)][,-c(1,2,60)]
+
+intr<-createDataPartition(y=complete_train$classe,p=0.6, list=FALSE)
+training<-complete_train[intr,]
+valid<-complete_train[-intr,]
+```
+
+The dataset is composed of 19622 observations of 160 different variables. First of all, those variables are filtered to ignore those containing a majority of missing values, which would not help the diagnostic. Then, the data is split into two datasets : the training one on which we will train our machine learning algorithm, and the validation (valid) one on which we will test the accuracy of our trained model.  
+We also ignore some colums that will bring biaised information to the model, like the id number of the athlete, or his name. This gets the number of variables down to 58.
+
+## Pre-processing
+```{r Pre-processing}
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           allowParallel = TRUE)
+```
+As training times can sometimes take hours, we allow parallel training to speed it up. Moreover,we swich the original resampling method from bootstrapping to k-fold cross validation ("cv"). This way, the number of samples is reduced and the training time smaller.
+
+
+## Fit model
+```{r Fit, cache=TRUE}
+fit <- train(classe ~ ., data = training, method = "rf", trControl=fitControl)
+
+stopCluster(cluster)
+registerDoSEQ()
+```
+The training is done with the earlier described preprocessing and with the random forest algorithm, known for its robustness. It trains the "fit" model to predict the way the exercise was done ("classe" variable) when knowing the other 57 predictors.
+
+
+```{r Evaluate}
+fit
+
+```
+As we can see, the trained random forest algorithm reaches an in-sample error of 99.8%, which is an excellent value. But the real accuracy that is of importance is the one on the valid dataset, that was not used for the training. 
+
+## In-sample Error
+```{r}
+confusionMatrix(predict(fit,training[,-58]),training[,58])
+```
+If we evaluate the predictions of our model on the training data, we get an accuracy of 100%, which means that the model managed to find parameters perfectly assigning each sample to its class. That is a good thing, but an in-sample error of 100% does not mean anything if the model does not work on new data.
+
+## 5-folds Cross-validation
+```{r}
+fit$resample
+confusionMatrix.train(fit)
+```
+The data is split into 5 "folds" to estimate how the model would perform in general on new data. The accuracy is each time excellent, giving us hope on the real out-sample error.  
+We can see on the cross-validated confusion matrix that no sample was incorrectly classified, giving an average accuracy of 99.8%, that we hope to see as high with new data.
+
+## Out of sample Error
+```{r}
+confusionMatrix(predict(fit,valid[,-58]),valid[,58])
+```
+If we now try our model on the validation dataset untouched until now, we can see on the confusion matrix that there is now some errors on the predictions : 8 samples were incorrectly classified. 8/7846=0.001 however, so the out of sample error is really small compared to the number of samples.   
+The resulting accuracy of our model is over 99.9%, which is excellent, almost perfect. 
+
